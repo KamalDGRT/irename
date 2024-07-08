@@ -4,12 +4,6 @@
 
 # Author: Matthew Renze
 
-# Usage: python.exe rename.py input-folder
-#   - input-folder = (optional) the directory containing the image files to be renamed
-
-# Examples: python.exe rename.py C:\Photos
-#           python.exe rename.py
-
 # Behavior:
 #  - Given a photo named "Photo Apr 01, 5 54 17 PM.jpg"  
 #  - with EXIF date taken of "4/1/2018 5:54:17 PM"  
@@ -18,38 +12,46 @@
 
 # Notes:
 #   - For safety, please make a backup of your photos before running this script
-#   - Currently only designed to work with .jpg, .jpeg, and .png files
-#   - If you omit the input folder, then the current working directory will be used instead.
 
 # Import libraries
 import os
-import sys
 from datetime import datetime
 from PIL import Image
 
 # Set list of valid file extensions
-valid_extensions = [".jpg", ".JPG", ".jpeg", ".JPEG", ".png", ".PNG"]
+valid_image_extensions = [
+    ".jpg", ".JPG",
+    ".jpeg", ".JPEG",
+    ".png", ".PNG"
+]
 
-# If folder path argument exists then use it
-# Else use the current running folder
-if len(sys.argv) > 1:
-    folder_path = input_file_path = sys.argv[1]
-else:
-    folder_path = os.getcwd()
+valid_video_extensions = [
+    ".MOV", ".mov",
+    ".MP4", ".mp4",
+    ".MKV", ".mkv"
+]
 
-# Get all files from folder
-file_names = os.listdir(folder_path)
+class ExifMetadataNotFound(Exception):
+    pass
 
-# For each file
-for file_name in file_names:
+class DateNotFoundInFile(Exception):
+    pass
 
-    # Get the file extension
-    file_ext = os.path.splitext(file_name)[1]
+def get_new_file_name(date: datetime, file_extension: str) -> str:
+    # Reformat the date taken to "YYYYMMDD-HHmmss"
+    # NOTE: Change this line to change the date/time format of the output filename
+    date_time = date.strftime("%Y%m%d-%H%M%S")
+    
+    # Combine the new file name and file extension
+    return date_time + file_ext
 
-    # Skip files without a valid file extension
-    if (file_ext not in valid_extensions):
-        continue
+def get_video_creation_date(video_path: str) -> datetime:
+    stat = os.stat(video_path)
+    c_timestamp = stat.st_birthtime
+    c_time = datetime.fromtimestamp(c_timestamp)
+    return c_time
 
+def get_image_file_name(folder_path: str, file_name: str) -> str:
     # Create the old file path
     old_file_path = os.path.join(folder_path, file_name)
 
@@ -57,12 +59,11 @@ for file_name in file_names:
     image = Image.open(old_file_path)
 
     # Get the EXIF metadata
-    metadata = image._getexif()
+    metadata = image.getexif()
 
     # Check if the metadata exists
     if metadata is None:
-        print(f"EXIF metadata not found in file: {file_name}")
-        continue
+        raise ExifMetadataNotFound
 
     # Get the date taken from the metadata
     if 36867 in metadata.keys():
@@ -70,24 +71,43 @@ for file_name in file_names:
     elif 306 in metadata.keys():
         date_taken = metadata[306]
     else:
-        print(f"Date not found in file: {file_name}")
-        continue
+        raise DateNotFoundInFile
 
     # Close the image
     image.close()
 
     # Get the date taken as a datetime object
     date_taken = datetime.strptime(date_taken, "%Y:%m:%d %H:%M:%S")
+    file_ext = os.path.splitext(file_name)[1]
+    return get_new_file_name(date_taken, file_ext)
 
-    # Reformat the date taken to "YYYYMMDD-HHmmss"
-    # NOTE: Change this line to change the date/time format of the output filename
-    date_time = date_taken.strftime("%Y%m%d-%H%M%S")
-    
-    # Combine the new file name and file extension
-    new_file_name = date_time + file_ext
+folder_path = "<Enter Valid Folder Name Here>"
 
-    # Create the new folder path
-    new_file_path = os.path.join(folder_path, new_file_name)
+file_names = os.listdir(folder_path)
 
-    # Rename the file
-    os.rename(old_file_path, new_file_path)
+# For each file
+for file_name in file_names:
+    # Get the file extension
+    file_ext = os.path.splitext(file_name)[1]
+    try:
+        # Skip files without a valid file extension
+        if (file_ext in valid_image_extensions):
+            new_file_name = get_image_file_name(folder_path, file_name)
+        elif (file_ext in valid_video_extensions):
+            video_file = os.path.join(folder_path, file_name)
+            video_creation_date = get_video_creation_date(video_file)
+            new_file_name = get_new_file_name(video_creation_date, file_ext)
+        else:
+            continue
+        
+        # Rename the file
+        old_file_path = os.path.join(folder_path, file_name)
+        new_file_path = os.path.join(folder_path, new_file_name)
+        # print(new_file_path)
+        print(old_file_path, new_file_path)
+        os.rename(old_file_path, new_file_path)
+
+    except ExifMetadataNotFound:
+        print(f"EXIF metadata not found in file: {file_name}")
+    except DateNotFoundInFile:
+        print(f"Date not found in file: {file_name}")
