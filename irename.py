@@ -1,14 +1,15 @@
 # Rename Images with Date Photo Taken
 
-# Purpose: Renames image files in a folder based on date photo taken from EXIF metadata
+# Purpose: Renames image files and videos in a folder based on date photo taken from EXIF metadata/the file creation date
 
-# Author: Matthew Renze
+# Original Author: Matthew Renze
+# Current Implementation: Kamal Sharma
 
 # Behavior:
 #  - Given a photo named "Photo Apr 01, 5 54 17 PM.jpg"
 #  - with EXIF date taken of "4/1/2018 5:54:17 PM"
 #  - when you run this script on its parent folder
-#  - then it will be renamed "20180401-175417.jpg"
+#  - then it will be renamed "IMG_20180401_175417.jpg"
 
 # Notes:
 #   - For safety, please make a backup of your photos before running this script
@@ -21,26 +22,6 @@ from PIL import Image
 from pillow_heif import register_heif_opener
 
 register_heif_opener()
-
-def determine_type(variable):
-    return type(variable).__name__
-
-def get_orig_date_from_exifread(file_path: str) -> str:
-    # Open image file for reading (must be in binary mode)
-    with open(file_path, "rb") as file_handle:
-        tags = exifread.process_file(file_handle)
-    
-    return str(tags["EXIF DateTimeOriginal"])
-
-   
-
-def append_to_file(file_name, content, endl=True):
-    file_handle = open(file_name, "a+")
-    file_handle.write(content)
-    if endl:
-        file_handle.write("\n")
-    file_handle.close()
-
 
 # Set list of valid file extensions
 valid_image_extensions = [
@@ -63,6 +44,26 @@ class ExifMetadataNotFound(Exception):
 
 class DateNotFoundInFile(Exception):
     pass
+
+
+def determine_type(variable):
+    return type(variable).__name__
+
+
+def get_orig_date_from_exifread(file_path: str) -> str:
+    # Open image file for reading (must be in binary mode)
+    with open(file_path, "rb") as file_handle:
+        tags = exifread.process_file(file_handle)
+
+    return str(tags.get("EXIF DateTimeOriginal", ""))
+
+
+def append_to_file(file_name, content, endl=True):
+    file_handle = open(file_name, "a+")
+    file_handle.write(content)
+    if endl:
+        file_handle.write("\n")
+    file_handle.close()
 
 
 def get_file_prefix(file_ext: str) -> str:
@@ -100,13 +101,15 @@ def get_file_creation_date(file_path: str) -> datetime:
     # Determine the earlier time
     return min(dt_m, dt_c, c_time)
 
+
 def create_datetime(data) -> datetime:
     return datetime.strptime(data, "%Y:%m:%d %H:%M:%S")
+
 
 def get_image_file_name(folder_path: str, file_name: str) -> str:
     # Create the old file path
     old_file_path = os.path.join(folder_path, file_name)
-    
+
     # Open the image
     image = Image.open(old_file_path)
 
@@ -117,19 +120,17 @@ def get_image_file_name(folder_path: str, file_name: str) -> str:
     if metadata is None:
         raise ExifMetadataNotFound
 
-    exifread_dt_sr = get_orig_date_from_exifread(old_file_path)
-    
     # Get the date taken from the metadata
-    print([x for x in metadata.keys()])
     if 36867 in metadata.keys():
         date_taken = create_datetime(metadata[36867])
-        print(date_taken)
     elif 306 in metadata.keys():
         date_taken = create_datetime(metadata[306])
-    elif len(exifread_dt_sr) > 0:
-        date_taken = create_datetime(exifread_dt_sr)
     else:
-        raise DateNotFoundInFile
+        exifread_dt_sr = get_orig_date_from_exifread(old_file_path)
+        if len(exifread_dt_sr) > 0:
+            date_taken = create_datetime(exifread_dt_sr)
+        else:
+            raise DateNotFoundInFile
 
     # Close the image
     image.close()
@@ -143,7 +144,7 @@ def get_image_file_name(folder_path: str, file_name: str) -> str:
     return get_new_file_name(earlier_date, file_ext)
 
 
-folder_path = "/Users/nico/Downloads/Vishalini"
+folder_path = "PhotosCategories/BadmintonDays"
 file_names = os.listdir(folder_path)
 
 # For each file
@@ -164,15 +165,14 @@ for file_name in file_names:
         # Rename the file
         old_file_path = os.path.join(folder_path, file_name)
         new_file_path = os.path.join(folder_path, new_file_name)
-        print("Old Name: " + old_file_path)
-        print("New Name: " + new_file_path)
-        
 
         if old_file_path == new_file_path:
-            print("Skipping rename!")
+            print("Skipping rename! -" + old_file_path)
         else:
+            print("Old Name: " + old_file_path)
+            print("New Name: " + new_file_path)
             os.rename(old_file_path, new_file_path)
-        print("----------------------------")
+            print("----------------------------")
 
     except ExifMetadataNotFound:
         append_to_file("meta_not_found.txt", file_name)
@@ -188,8 +188,11 @@ for file_name in file_names:
         # Rename the file
         old_file_path = os.path.join(folder_path, file_name)
         new_file_path = os.path.join(folder_path, new_file_name)
-        print("Old Name: " + old_file_path)
-        print("New Name: " + new_file_path)
 
-        os.rename(old_file_path, new_file_path)
-        print("----------------------------")
+        if old_file_path == new_file_path:
+            print("Skipping rename! -" + old_file_path)
+        else:
+            print("Old Name: " + old_file_path)
+            print("New Name: " + new_file_path)
+            os.rename(old_file_path, new_file_path)
+            print("----------------------------")
