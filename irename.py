@@ -18,7 +18,7 @@
 import os
 from datetime import datetime
 import exifread
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 
 register_heif_opener()
@@ -106,10 +106,7 @@ def create_datetime(data) -> datetime:
     return datetime.strptime(data, "%Y:%m:%d %H:%M:%S")
 
 
-def get_image_file_name(folder_path: str, file_name: str) -> str:
-    # Create the old file path
-    old_file_path = os.path.join(folder_path, file_name)
-
+def process_image_file(old_file_path: str) -> str:
     # Open the image
     image = Image.open(old_file_path)
 
@@ -144,7 +141,18 @@ def get_image_file_name(folder_path: str, file_name: str) -> str:
     return get_new_file_name(earlier_date, file_ext)
 
 
-folder_path = "PhotosCategories/BadmintonDays"
+def get_image_file_name(folder_path: str, file_name: str) -> str:
+    # Create the old file path
+    old_file_path = os.path.join(folder_path, file_name)
+
+    try:
+        return process_image_file(old_file_path)
+    except UnidentifiedImageError:
+        image_creation_date = get_file_creation_date(old_file_path)
+        return get_new_file_name(image_creation_date, file_ext)
+
+
+folder_path = "folder-path"
 file_names = os.listdir(folder_path)
 
 # For each file
