@@ -4,6 +4,7 @@
 
 # Original Author: Matthew Renze
 # Current Implementation: Kamal Sharma
+# With slight tweaks from ChatGPT
 
 # Behavior:
 #  - Given a photo named "Photo Apr 01, 5 54 17 PM.jpg"
@@ -15,6 +16,7 @@
 #   - For safety, please make a backup of your photos before running this script
 
 # Import libraries
+
 import os
 from datetime import datetime
 import exifread
@@ -23,19 +25,10 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()
 
-# Set list of valid file extensions
-valid_image_extensions = [
-    ".jpg",
-    ".JPG",
-    ".jpeg",
-    ".JPEG",
-    ".png",
-    ".PNG",
-    ".heic",
-    ".HEIC",
-]
-
-valid_video_extensions = [".MOV", ".mov", ".MP4", ".mp4", ".MKV", ".mkv"]
+# Set valid file extensions
+VALID_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic"}
+VALID_VIDEO_EXTENSIONS = {".mov", ".mp4", ".mkv"}
+VALID_EXTENSIONS = VALID_IMAGE_EXTENSIONS | VALID_VIDEO_EXTENSIONS
 
 
 class ExifMetadataNotFound(Exception):
@@ -46,161 +39,115 @@ class DateNotFoundInFile(Exception):
     pass
 
 
-def determine_type(variable):
-    return type(variable).__name__
-
-
-def get_orig_date_from_exifread(file_path: str) -> str:
-    # Open image file for reading (must be in binary mode)
-    with open(file_path, "rb") as file_handle:
-        tags = exifread.process_file(file_handle)
-
-    return str(tags.get("EXIF DateTimeOriginal", ""))
-
-
-def append_to_file(file_name, content, endl=True):
-    file_handle = open(file_name, "a+")
-    file_handle.write(content)
-    if endl:
-        file_handle.write("\n")
-    file_handle.close()
+def append_to_file(file_name: str, content: str, endl: bool = True):
+    """Append content to a file."""
+    with open(file_name, "a+") as file_handle:
+        file_handle.write(content)
+        if endl:
+            file_handle.write("\n")
 
 
 def get_file_prefix(file_ext: str) -> str:
-    if file_ext in valid_image_extensions:
+    """Get file prefix based on file type."""
+    if file_ext in VALID_IMAGE_EXTENSIONS:
         return "IMG_"
-    elif file_ext in valid_video_extensions:
+    elif file_ext in VALID_VIDEO_EXTENSIONS:
         return "VID_"
-    else:
-        return ""
+    return ""
 
 
 def get_new_file_name(date: datetime, file_extension: str) -> str:
-    # Reformat the date taken to "YYYYMMDD-HHmmss"
-    # NOTE: Change this line to change the date/time format of the output filename
+    """Generate a new file name based on the date."""
     date_time = date.strftime("%Y%m%d_%H%M%S")
-
-    # Combine the new file name and file extension
-    return get_file_prefix(file_ext) + date_time + file_ext
+    return f"{get_file_prefix(file_extension)}{date_time}{file_extension}"
 
 
 def get_file_creation_date(file_path: str) -> datetime:
-    # File modification timestamp
-    m_time = os.path.getmtime(file_path)
-    dt_m = datetime.fromtimestamp(m_time)
-
-    # File creation timestamp
-    c_time = os.path.getctime(file_path)
-    dt_c = datetime.fromtimestamp(c_time)
-
-    # Birth Time
-    stat = os.stat(file_path)
-    c_timestamp = stat.st_birthtime
-    c_time = datetime.fromtimestamp(c_timestamp)
-
-    # Determine the earlier time
-    return min(dt_m, dt_c, c_time)
+    """Get the earliest date between creation, modification, and birth time."""
+    stats = os.stat(file_path)
+    m_time = datetime.fromtimestamp(stats.st_mtime)
+    c_time = datetime.fromtimestamp(stats.st_ctime)
+    b_time = datetime.fromtimestamp(getattr(stats, "st_birthtime", stats.st_ctime))
+    return min(m_time, c_time, b_time)
 
 
-def create_datetime(data) -> datetime:
-    return datetime.strptime(data, "%Y:%m:%d %H:%M:%S")
+def create_datetime(date_str: str) -> datetime:
+    """Convert a date string into a datetime object."""
+    return datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
 
 
-def process_image_file(old_file_path: str) -> str:
-    # Open the image
-    image = Image.open(old_file_path)
-
-    # Get the EXIF metadata
-    metadata = image.getexif()
-
-    # Check if the metadata exists
-    if metadata is None:
-        raise ExifMetadataNotFound
-
-    # Get the date taken from the metadata
-    if 36867 in metadata.keys():
-        date_taken = create_datetime(metadata[36867])
-    elif 306 in metadata.keys():
-        date_taken = create_datetime(metadata[306])
-    else:
-        exifread_dt_sr = get_orig_date_from_exifread(old_file_path)
-        if len(exifread_dt_sr) > 0:
-            date_taken = create_datetime(exifread_dt_sr)
-        else:
-            raise DateNotFoundInFile
-
-    # Close the image
-    image.close()
-
-    method_1_dt = get_file_creation_date(old_file_path)
-    earlier_date = min(method_1_dt, date_taken)
-
-    # Get the date taken as a datetime object
-    # date_taken = datetime.strptime(creation_date, "%Y:%m:%d_%H:%M:%S")
-    file_ext = os.path.splitext(file_name)[1]
-    return get_new_file_name(earlier_date, file_ext)
-
-
-def get_image_file_name(folder_path: str, file_name: str) -> str:
-    # Create the old file path
-    old_file_path = os.path.join(folder_path, file_name)
-
+def get_exif_date(file_path: str) -> datetime:
+    """Retrieve the EXIF date or fallback to file creation date."""
     try:
-        return process_image_file(old_file_path)
-    except UnidentifiedImageError:
-        image_creation_date = get_file_creation_date(old_file_path)
-        return get_new_file_name(image_creation_date, file_ext)
+        with Image.open(file_path) as image:
+            metadata = image.getexif()
+            if 36867 in metadata:  # DateTimeOriginal
+                return create_datetime(metadata[36867])
+            elif 306 in metadata:  # DateTime
+                return create_datetime(metadata[306])
+    except (KeyError, ValueError):
+        pass
+
+    # Fallback to exifread library
+    with open(file_path, "rb") as file_handle:
+        tags = exifread.process_file(file_handle)
+    exif_date = tags.get("EXIF DateTimeOriginal")
+    if exif_date:
+        return create_datetime(str(exif_date))
+
+    raise ExifMetadataNotFound
 
 
-folder_path = "folder-path"
-file_names = os.listdir(folder_path)
-
-# For each file
-for file_name in file_names:
-    # Get the file extension
-    file_ext = os.path.splitext(file_name)[1]
+def process_file(file_path: str, file_extension: str) -> str:
+    """Process a file and generate a new name based on metadata or creation date."""
     try:
-        # Skip files without a valid file extension
-        if file_ext in valid_image_extensions:
-            new_file_name = get_image_file_name(folder_path, file_name)
-        elif file_ext in valid_video_extensions:
-            video_file = os.path.join(folder_path, file_name)
-            video_creation_date = get_file_creation_date(video_file)
-            new_file_name = get_new_file_name(video_creation_date, file_ext)
-        else:
-            continue
-
-        # Rename the file
-        old_file_path = os.path.join(folder_path, file_name)
-        new_file_path = os.path.join(folder_path, new_file_name)
-
-        if old_file_path == new_file_path:
-            print("Skipping rename! -" + old_file_path)
-        else:
-            print("Old Name: " + old_file_path)
-            print("New Name: " + new_file_path)
-            os.rename(old_file_path, new_file_path)
-            print("----------------------------")
-
+        date = get_exif_date(file_path)
     except ExifMetadataNotFound:
-        append_to_file("meta_not_found.txt", file_name)
-        print(f"EXIF metadata not found in file: {file_name}")
+        append_to_file("meta_not_found.txt", os.path.basename(file_path))
+        date = get_file_creation_date(file_path)
     except DateNotFoundInFile:
-        append_to_file("date_not_found.txt", file_name)
-        print(f"Date not found in file: {file_name}")
+        append_to_file("date_not_found.txt", os.path.basename(file_path))
+        date = get_file_creation_date(file_path)
 
-        no_data_file = os.path.join(folder_path, file_name)
-        file_creation_date = get_file_creation_date(no_data_file)
-        new_file_name = get_new_file_name(file_creation_date, file_ext)
+    return get_new_file_name(date, file_extension)
 
-        # Rename the file
-        old_file_path = os.path.join(folder_path, file_name)
-        new_file_path = os.path.join(folder_path, new_file_name)
 
-        if old_file_path == new_file_path:
-            print("Skipping rename! -" + old_file_path)
+def rename_file(folder_path: str, file_name: str):
+    """Rename a file based on metadata or creation date."""
+    file_path = os.path.join(folder_path, file_name)
+    file_extension = os.path.splitext(file_name)[1].lower()
+
+    if file_extension not in VALID_EXTENSIONS:
+        return
+
+    try:
+        if file_extension in VALID_IMAGE_EXTENSIONS:
+            new_name = process_file(file_path, file_extension)
+        elif file_extension in VALID_VIDEO_EXTENSIONS:
+            video_date = get_file_creation_date(file_path)
+            new_name = get_new_file_name(video_date, file_extension)
+        
+        new_path = os.path.join(folder_path, new_name)
+
+        if file_path == new_path:
+            print(f"Skipping rename! - {file_path}")
         else:
-            print("Old Name: " + old_file_path)
-            print("New Name: " + new_file_path)
-            os.rename(old_file_path, new_file_path)
+            print(f"Old Name: {file_path}")
+            print(f"New Name: {new_path}")
+            os.rename(file_path, new_path)
             print("----------------------------")
+    except UnidentifiedImageError:
+        append_to_file("invalid_image_files.txt", file_name)
+        print(f"Unidentified image file: {file_name}")
+
+
+def main(folder_path: str):
+    """Main function to process files in a folder."""
+    for file_name in os.listdir(folder_path):
+        rename_file(folder_path, file_name)
+
+
+# Run the script
+if __name__ == "__main__":
+    folder_path = "/user/xyz/down/up"
+    main(folder_path)
